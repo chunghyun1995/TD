@@ -1,0 +1,1901 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>타워 디펜스 게임</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: #1a1a2e;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  overflow: hidden;
+}
+#gameContainer {
+  position: relative;
+  width: 960px;
+  height: 640px;
+  max-width: 100vw;
+  max-height: 100vh;
+}
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+#overlay {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: none;
+  justify-content: center;
+  align-items: center;
+  background: rgba(0,0,0,0.85);
+  z-index: 100;
+  flex-direction: column;
+}
+#overlay.active { display: flex; }
+#overlay h1 { color: #fff; font-size: 48px; margin-bottom: 20px; text-shadow: 0 0 20px rgba(255,255,255,0.3); }
+#overlay p { color: #ccc; font-size: 18px; margin: 5px 0; }
+#overlay button {
+  margin-top: 30px;
+  padding: 15px 40px;
+  font-size: 20px;
+  background: linear-gradient(135deg, #e94560, #c23152);
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+#overlay button:hover { transform: scale(1.05); }
+</style>
+</head>
+<body>
+
+<div id="gameContainer">
+  <canvas id="gameCanvas" width="960" height="640"></canvas>
+  <div id="overlay">
+    <h1 id="overlayTitle">게임 오버</h1>
+    <p id="overlayStats"></p>
+    <button id="restartBtn">다시 시작</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// 게임 상수 및 설정
+// ============================================================
+const CANVAS_W = 960;
+const CANVAS_H = 640;
+const TOWER_SPOT_SIZE = 50;
+
+// ============================================================
+// 캔버스 및 컨텍스트
+// ============================================================
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const overlayTitle = document.getElementById('overlayTitle');
+const overlayStats = document.getElementById('overlayStats');
+const restartBtn = document.getElementById('restartBtn');
+
+// ============================================================
+// 게임 상태
+// ============================================================
+let game = {};
+
+function initGame() {
+  game = {
+    money: 400,
+    lives: 20,
+    wave: 0,
+    maxWaves: 20,
+    stage: 1,
+    speed: 1,
+    state: 'playing',
+    selectedTowerType: null,
+    selectedTower: null,
+    showUpgradeMenu: false,
+    showTowerSelectPanel: false,
+    clickedSpotIndex: null,
+    enemies: [],
+    towers: [],
+    projectiles: [],
+    particles: [],
+    damageNumbers: [],
+    waveEnemies: [],
+    spawnTimer: 0,
+    spawnInterval: 0.5,
+    waveActive: false,
+    waveDelay: 0,
+    betweenWaves: true,
+    allSpawned: false,
+    mouseX: 0,
+    mouseY: 0,
+    hoveredTowerSpot: null,
+    pathPoints: [],
+    towerSpots: []
+  };
+
+  loadStage(1);
+}
+
+/// ============================================================
+// 스테이지 로드 (맵 변경 + 타워 초기화)
+// ============================================================
+function loadStage(stageNum) {
+  game.stage = stageNum;
+  
+  // ★ 이전 스테이지의 모든 타워 제거
+  game.towers = [];
+  for (const spot of game.towerSpots) {
+    spot.occupied = false;
+    spot.tower = null;
+  }
+
+  buildPath();
+  buildTowerSpots();
+}
+
+// ============================================================
+// 경로 (Waypoints) 정의 - 곡선 경로 (스테이지별 다른 맵)
+// ============================================================
+function buildPath() {
+  let waypoints;
+
+  if (game.stage === 1) {
+    // 스테이지 1: S자 곡선
+    waypoints = [
+      { x: -30, y: 120 },
+      { x: 120, y: 120 },
+      { x: 200, y: 180 },
+      { x: 260, y: 300 },
+      { x: 260, y: 420 },
+      { x: 340, y: 500 },
+      { x: 480, y: 500 },
+      { x: 560, y: 420 },
+      { x: 560, y: 300 },
+      { x: 500, y: 220 },
+      { x: 420, y: 180 },
+      { x: 340, y: 160 },
+      { x: 300, y: 100 },
+      { x: 380, y: 50 },
+      { x: 520, y: 50 },
+      { x: 640, y: 100 },
+      { x: 700, y: 200 },
+      { x: 700, y: 340 },
+      { x: 780, y: 420 },
+      { x: 900, y: 420 },
+      { x: 960, y: 420 }
+    ];
+  } else if (game.stage === 2) {
+    // 스테이지 2: 나선형 맵
+    waypoints = [
+      { x: -30, y: 50 },
+      { x: 100, y: 50 },
+      { x: 160, y: 140 },
+      { x: 200, y: 280 },
+      { x: 300, y: 360 },
+      { x: 480, y: 360 },
+      { x: 580, y: 280 },
+      { x: 600, y: 140 },
+      { x: 540, y: 80 },
+      { x: 420, y: 80 },
+      { x: 360, y: 160 },
+      { x: 360, y: 260 },
+      { x: 440, y: 300 },
+      { x: 540, y: 260 },
+      { x: 540, y: 180 },
+      { x: 480, y: 140 },
+      { x: 400, y: 160 },
+      { x: 380, y: 240 },
+      { x: 440, y: 250 },
+      { x: 520, y: 240 },
+      { x: 520, y: 160 },
+      { x: 480, y: 120 },
+      { x: 420, y: 130 },
+      { x: 400, y: 200 },
+      { x: 440, y: 250 },
+      { x: 500, y: 220 },
+      { x: 500, y: 140 },
+      { x: 460, y: 100 },
+      { x: 380, y: 110 },
+      { x: 370, y: 200 },
+      { x: 420, y: 250 },
+      { x: 480, y: 230 },
+      { x: 480, y: 160 },
+      { x: 450, y: 120 },
+      { x: 560, y: 120 },
+      { x: 660, y: 160 },
+      { x: 720, y: 280 },
+      { x: 720, y: 420 },
+      { x: 660, y: 500 },
+      { x: 520, y: 500 },
+      { x: 440, y: 460 },
+      { x: 380, y: 380 },
+      { x: 440, y: 320 },
+      { x: 540, y: 320 },
+      { x: 620, y: 380 },
+      { x: 700, y: 380 },
+      { x: 780, y: 460 },
+      { x: 900, y: 460 },
+      { x: 960, y: 460 }
+    ];
+  } else if (game.stage === 3) {
+    // 스테이지 3: 지그재그 맵
+    waypoints = [
+      { x: -30, y: 320 },
+      { x: 80, y: 320 },
+      { x: 140, y: 200 },
+      { x: 220, y: 200 },
+      { x: 280, y: 100 },
+      { x: 400, y: 100 },
+      { x: 460, y: 200 },
+      { x: 560, y: 200 },
+      { x: 620, y: 320 },
+      { x: 740, y: 320 },
+      { x: 800, y: 180 },
+      { x: 900, y: 180 },
+      { x: 960, y: 280 }
+    ];
+  } else if (game.stage === 4) {
+    // 스테이지 4: M자 맵
+    waypoints = [
+      { x: -30, y: 500 },
+      { x: 100, y: 500 },
+      { x: 160, y: 380 },
+      { x: 240, y: 380 },
+      { x: 300, y: 200 },
+      { x: 400, y: 200 },
+      { x: 460, y: 400 },
+      { x: 560, y: 400 },
+      { x: 620, y: 180 },
+      { x: 720, y: 180 },
+      { x: 780, y: 380 },
+      { x: 880, y: 380 },
+      { x: 940, y: 460 },
+      { x: 960, y: 520 }
+    ];
+  } else if (game.stage === 5) {
+    // 스테이지 5: 대각선 맵
+    waypoints = [
+      { x: -30, y: 320 },
+      { x: 80, y: 320 },
+      { x: 140, y: 260 },
+      { x: 220, y: 260 },
+      { x: 280, y: 180 },
+      { x: 360, y: 180 },
+      { x: 420, y: 300 },
+      { x: 520, y: 300 },
+      { x: 580, y: 160 },
+      { x: 680, y: 160 },
+      { x: 740, y: 300 },
+      { x: 840, y: 300 },
+      { x: 900, y: 420 },
+      { x: 960, y: 500 }
+    ];
+  } else {
+    // 스테이지 6+: 랜덤 생성
+    const numPoints = 10 + Math.floor(Math.random() * 8);
+    waypoints = [];
+    let prevX = -30;
+    let prevY = CANVAS_H / 2;
+    for (let i = 0; i < numPoints; i++) {
+      const nextX = prevX + 100 + Math.random() * 150;
+      const nextY = 80 + Math.random() * (CANVAS_H - 160);
+      waypoints.push({ x: prevX, y: prevY });
+      prevX = nextX;
+      prevY = nextY;
+    }
+    waypoints.push({ x: prevX, y: prevY });
+    waypoints.push({ x: CANVAS_W + 30, y: prevY });
+  }
+
+  game.pathPoints = [];
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const p0 = waypoints[Math.max(0, i - 1)];
+    const p1 = waypoints[i];
+    const p2 = waypoints[i + 1];
+    const p3 = waypoints[Math.min(waypoints.length - 1, i + 2)];
+
+    const segments = 40;
+    for (let t = 0; t <= segments; t++) {
+      const s = t / segments;
+      const x = catmullRom(p0.x, p1.x, p2.x, p3.x, s);
+      const y = catmullRom(p0.y, p1.y, p2.y, p3.y, s);
+      game.pathPoints.push({ x, y });
+    }
+  }
+}
+
+function catmullRom(p0, p1, p2, p3, t) {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * (
+    (2 * p1) +
+    (-p0 + p2) * t +
+    (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+    (-p0 + 3 * p1 - 3 * p2 + p3) * t3
+  );
+}
+
+// ============================================================
+// 타워 배치 스팟 생성 (스테이지별 다른 위치)
+// ============================================================
+function buildTowerSpots() {
+  let spots;
+
+  if (game.stage === 1) {
+    spots = [
+      { x: 80, y: 170 }, { x: 160, y: 230 },
+      { x: 200, y: 350 }, { x: 310, y: 440 },
+      { x: 420, y: 460 }, { x: 500, y: 460 },
+      { x: 610, y: 380 }, { x: 650, y: 270 },
+      { x: 460, y: 130 }, { x: 360, y: 100 },
+      { x: 580, y: 130 }, { x: 720, y: 270 },
+      { x: 840, y: 360 }, { x: 620, y: 480 },
+      { x: 150, y: 90 }, { x: 440, y: 560 },
+      { x: 760, y: 320 }, { x: 280, y: 200 }
+    ];
+  } else if (game.stage === 2) {
+    spots = [
+      { x: 140, y: 100 }, { x: 260, y: 100 },
+      { x: 380, y: 140 }, { x: 500, y: 140 },
+      { x: 560, y: 220 }, { x: 640, y: 300 },
+      { x: 720, y: 220 }, { x: 800, y: 300 },
+      { x: 340, y: 300 }, { x: 460, y: 300 },
+      { x: 540, y: 360 }, { x: 620, y: 440 },
+      { x: 700, y: 440 }, { x: 820, y: 440 },
+      { x: 100, y: 350 }, { x: 900, y: 350 }
+    ];
+  } else if (game.stage === 3) {
+    spots = [
+      { x: 80, y: 260 }, { x: 180, y: 140 },
+      { x: 340, y: 140 }, { x: 500, y: 260 },
+      { x: 660, y: 260 }, { x: 740, y: 120 },
+      { x: 860, y: 120 }, { x: 920, y: 340 },
+      { x: 140, y: 380 }, { x: 300, y: 380 },
+      { x: 560, y: 380 }, { x: 780, y: 380 }
+    ];
+  } else if (game.stage === 4) {
+    spots = [
+      { x: 120, y: 440 }, { x: 200, y: 320 },
+      { x: 340, y: 140 }, { x: 500, y: 140 },
+      { x: 600, y: 280 }, { x: 700, y: 120 },
+      { x: 840, y: 320 }, { x: 920, y: 400 },
+      { x: 260, y: 500 }, { x: 560, y: 500 }
+    ];
+  } else if (game.stage === 5) {
+    spots = [
+      { x: 100, y: 260 }, { x: 260, y: 120 },
+      { x: 480, y: 240 }, { x: 640, y: 100 },
+      { x: 800, y: 240 }, { x: 920, y: 360 },
+      { x: 180, y: 380 }, { x: 560, y: 380 }
+    ];
+  } else {
+    // 랜덤 스팟 생성 (경로 근처에)
+    spots = [];
+    const count = 12 + Math.floor(Math.random() * 8);
+    for (let i = 0; i < count; i++) {
+      const idx = Math.floor(Math.random() * game.pathPoints.length);
+      const basePt = game.pathPoints[idx];
+      const offsetX = (Math.random() - 0.5) * 120;
+      const offsetY = (Math.random() - 0.5) * 120;
+      const sx = Math.max(40, Math.min(CANVAS_W - 40, basePt.x + offsetX));
+      const sy = Math.max(55, Math.min(CANVAS_H - 80, basePt.y + offsetY));
+      spots.push({ x: sx, y: sy });
+    }
+  }
+
+  game.towerSpots = spots.map(s => ({
+    x: s.x,
+    y: s.y,
+    tower: null,
+    occupied: false
+  }));
+}
+
+// ============================================================
+// 타워 정의
+// ============================================================
+const TOWER_DEFS = {
+  basic: {
+    name: '기본 타워',
+    cost: 100,
+    damage: [8, 14, 22],
+    range: [130, 160, 195],
+    fireRate: [0.4, 0.3, 0.2],
+    color: '#4fc3f7',
+    projectileColor: '#81d4fa',
+    desc: '빠른 속도의 단일 공격 타워'
+  },
+  sniper: {
+    name: '저격 타워',
+    cost: 250,
+    damage: [40, 75, 130],
+    range: [250, 300, 360],
+    fireRate: [1.5, 1.2, 0.9],
+    color: '#ab47bc',
+    projectileColor: '#ce93d8',
+    desc: '긴 사거리의 높은 데미지 타워'
+  },
+  splash: {
+    name: '범위 타워',
+    cost: 200,
+    damage: [15, 28, 45],
+    range: [100, 130, 160],
+    fireRate: [1.0, 0.8, 0.6],
+    color: '#ff7043',
+    projectileColor: '#ffab91',
+    splashRadius: [50, 65, 80],
+    desc: '주변 적에게 범위 데미지 타워'
+  }
+};
+
+// ============================================================
+// 적 정의
+// ============================================================
+const ENEMY_DEFS = {
+  normal: { name: '일반 적', hp: 30, speed: 60, reward: 5, color: '#ef5350', radius: 12 },
+  fast: { name: '빠른 적', hp: 15, speed: 120, reward: 8, color: '#ffa726', radius: 9 },
+  tank: { name: '탱커 적', hp: 100, speed: 35, reward: 15, color: '#66bb6a', radius: 18 },
+  boss: { name: '보스 적', hp: 500, speed: 25, reward: 50, color: '#7e57c2', radius: 24 }
+};
+
+// ============================================================
+// 웨이브 구성 (스테이지별 난이도 증가)
+// ============================================================
+function getWaveEnemies(waveNum) {
+  const enemies = [];
+  // 스테이지가 높을수록 체력 보너스 큼
+  const hpMult = 1 + (waveNum - 1) * 0.15 + (game.stage - 1) * 0.2;
+  const countBase = waveNum <= 5 ? waveNum : waveNum + 2;
+
+  for (let i = 0; i < countBase; i++) {
+    // 스테이지가 높을수록 강한 적 비율 증가
+    const fastChance = Math.min(0.3, 0.1 + game.stage * 0.05);
+    const tankChance = Math.min(0.2, 0.05 + game.stage * 0.04);
+
+    if (Math.random() < fastChance) {
+      enemies.push({ type: 'fast', hpMult });
+    } else if (Math.random() < fastChance + tankChance) {
+      enemies.push({ type: 'tank', hpMult });
+    } else {
+      enemies.push({ type: 'normal', hpMult });
+    }
+  }
+
+  // 보스 등장: 매 5웨이브마다, 마지막 웨이브에는 반드시
+  if (waveNum % 5 === 0 || waveNum === game.maxWaves) {
+    const bossHpMult = hpMult * (1 + (game.stage - 1) * 0.3);
+    enemies.push({ type: 'boss', hpMult: bossHpMult });
+  }
+
+  return enemies;
+}
+
+// ============================================================
+// 적 생성
+// ============================================================
+function createEnemy(type, hpMult) {
+  const def = ENEMY_DEFS[type];
+  const enemy = {
+    type,
+    x: game.pathPoints[0].x,
+    y: game.pathPoints[0].y,
+    waypointIndex: 0,
+    hp: Math.round(def.hp * hpMult),
+    maxHp: Math.round(def.hp * hpMult),
+    speed: def.speed,
+    reward: def.reward + (game.stage - 1) * 2, // 스테이지 높을수록 보상 증가
+    color: def.color,
+    radius: def.radius,
+    alive: true,
+    reachedEnd: false,
+    damageFlash: 0,
+    hitTimer: 0
+  };
+  return enemy;
+}
+
+// ============================================================
+// 타워 생성
+// ============================================================
+function createTower(type, spotIndex) {
+  const def = TOWER_DEFS[type];
+  const spot = game.towerSpots[spotIndex];
+  return {
+    type,
+    level: 1,
+    x: spot.x,
+    y: spot.y,
+    damage: def.damage[0],
+    range: def.range[0],
+    fireRate: def.fireRate[0],
+    splashRadius: def.splashRadius ? def.splashRadius[0] : 0,
+    color: def.color,
+    projectileColor: def.projectileColor,
+    lastFireTime: 0,
+    angle: 0,
+    targetEnemy: null,
+    spotIndex
+  };
+}
+
+// ============================================================
+// 타워 업그레이드
+// ============================================================
+function upgradeTower(tower) {
+  if (tower.level >= 3) return false;
+  const def = TOWER_DEFS[tower.type];
+  const nextLevel = tower.level + 1;
+  const cost = Math.round(def.cost * (0.5 + nextLevel * 0.2));
+
+  if (game.money < cost) return false;
+
+  game.money -= cost;
+  tower.level = nextLevel;
+  tower.damage = def.damage[nextLevel - 1];
+  tower.range = def.range[nextLevel - 1];
+  tower.fireRate = def.fireRate[nextLevel - 1];
+  if (def.splashRadius) {
+    tower.splashRadius = def.splashRadius[nextLevel - 1];
+  }
+
+  return true;
+}
+
+// ============================================================
+// 사거리 내 타워 찾기
+// ============================================================
+function findTargetInRange(tower, enemies) {
+  let closest = null;
+  let closestDist = Infinity;
+
+  for (const enemy of enemies) {
+    if (!enemy.alive) continue;
+    const dx = enemy.x - tower.x;
+    const dy = enemy.y - tower.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist <= tower.range && dist < closestDist) {
+      if (!closest || enemy.waypointIndex > closest.waypointIndex ||
+          (enemy.waypointIndex === closest.waypointIndex && dist < closestDist)) {
+        closest = enemy;
+        closestDist = dist;
+      }
+    }
+  }
+
+  return closest;
+}
+
+// ============================================================
+// 발사체 생성
+// ============================================================
+function createProjectile(tower, target) {
+  game.projectiles.push({
+    x: tower.x,
+    y: tower.y,
+    targetX: target.x,
+    targetY: target.y,
+    targetEnemy: target,
+    speed: 400,
+    damage: tower.damage,
+    color: tower.projectileColor,
+    splashRadius: tower.splashRadius || 0,
+    type: tower.type,
+    alive: true
+  });
+}
+
+// ============================================================
+// 파티클 효과
+// ============================================================
+function spawnParticles(x, y, color, count) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 30 + Math.random() * 80;
+    game.particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 0.4 + Math.random() * 0.4,
+      maxLife: 0.4 + Math.random() * 0.4,
+      color,
+      size: 2 + Math.random() * 3
+    });
+  }
+}
+
+function spawnDamageNumber(x, y, damage) {
+  game.damageNumbers.push({
+    x: x + (Math.random() - 0.5) * 20,
+    y: y - 10,
+    text: Math.round(damage).toString(),
+    life: 0.8,
+    maxLife: 0.8,
+    vy: -40
+  });
+}
+
+// ============================================================
+// 웨이브 시작
+// ============================================================
+function startWave() {
+  if (game.wave >= game.maxWaves) return;
+
+  game.wave++;
+  game.waveEnemies = getWaveEnemies(game.wave);
+  game.spawnInterval = Math.max(0.15, 0.6 - game.wave * 0.02);
+  game.spawnTimer = 0;
+  game.allSpawned = false;
+  game.waveActive = true;
+  game.betweenWaves = false;
+
+  // 첫 적 즉시 스폰
+  game.spawnTimer = -game.spawnInterval * 10;
+}
+
+// ============================================================
+// 게임 업데이트
+// ============================================================
+function update(dt) {
+  if (game.state !== 'playing') return;
+
+  const scaledDt = dt * game.speed;
+
+  // 웨이브 진행
+  if (game.waveActive && !game.betweenWaves) {
+    // 적 스폰
+    if (!game.allSpawned) {
+      game.spawnTimer += scaledDt;
+      if (game.spawnTimer >= game.spawnInterval && game.waveEnemies.length > 0) {
+        const next = game.waveEnemies.shift();
+        const enemy = createEnemy(next.type, next.hpMult);
+        game.enemies.push(enemy);
+        game.spawnTimer = 0;
+
+        if (game.waveEnemies.length === 0) {
+          game.allSpawned = true;
+        }
+      }
+    }
+
+    // 적 업데이트
+    for (const enemy of game.enemies) {
+      if (!enemy.alive || enemy.reachedEnd) continue;
+
+      const targetPt = game.pathPoints[Math.min(enemy.waypointIndex + 1, game.pathPoints.length - 1)];
+      const dx = targetPt.x - enemy.x;
+      const dy = targetPt.y - enemy.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < 3) {
+        enemy.waypointIndex++;
+        if (enemy.waypointIndex >= game.pathPoints.length - 1) {
+          enemy.reachedEnd = true;
+          enemy.alive = false;
+          game.lives--;
+          spawnParticles(enemy.x, enemy.y, '#ff0000', 8);
+
+          if (game.lives <= 0) {
+            game.state = 'gameOver';
+            showGameOver();
+            return;
+          }
+        }
+      } else {
+        const moveSpeed = enemy.speed * scaledDt;
+        enemy.x += (dx / dist) * moveSpeed;
+        enemy.y += (dy / dist) * moveSpeed;
+      }
+
+      if (enemy.damageFlash > 0) enemy.damageFlash -= dt;
+    }
+
+    // 죽은 적 배열에서 제거
+    game.enemies = game.enemies.filter(e => e.alive);
+
+    // 웨이브 클리어 체크: 모든 적이 스폰되었고, 살아있는 적이 없음
+    if (game.allSpawned && game.enemies.length === 0) {
+      if (game.wave >= game.maxWaves) {
+        // ★ 마지막 웨이브 클리어 → 다음 스테이지 또는 승리
+        if (game.stage < 5) {
+          showStageClear();
+        } else {
+          game.state = 'victory';
+          showVictory();
+        }
+      } else {
+        game.betweenWaves = true;
+        game.waveDelay = 3;
+      }
+    }
+  }
+
+  // 웨이브 간 대기 시간
+  if (game.betweenWaves) {
+    game.waveDelay -= scaledDt;
+    if (game.waveDelay <= 0) {
+      startWave();
+    }
+  }
+
+  // 타워 발사 업데이트
+  for (const tower of game.towers) {
+    const target = findTargetInRange(tower, game.enemies);
+    if (target) {
+      tower.targetEnemy = target;
+      tower.angle = Math.atan2(target.y - tower.y, target.x - tower.x);
+
+      const now = performance.now() / 1000;
+      if (now - tower.lastFireTime >= tower.fireRate) {
+        createProjectile(tower, target);
+        tower.lastFireTime = now;
+      }
+    } else {
+      tower.targetEnemy = null;
+    }
+  }
+
+  // 발사체 업데이트
+  for (const proj of game.projectiles) {
+    if (!proj.alive) continue;
+
+    let tx, ty;
+    if (proj.type === 'splash' && proj.targetEnemy && proj.targetEnemy.alive) {
+      tx = proj.targetEnemy.x;
+      ty = proj.targetEnemy.y;
+    } else {
+      tx = proj.targetX;
+      ty = proj.targetY;
+    }
+
+    const dx = tx - proj.x;
+    const dy = ty - proj.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+
+    if (dist < 10) {
+      proj.alive = false;
+
+      if (proj.splashRadius > 0) {
+        for (const enemy of game.enemies) {
+          if (!enemy.alive) continue;
+          const edx = enemy.x - tx;
+          const edy = enemy.y - ty;
+          const eDist = Math.sqrt(edx * edx + edy * edy);
+          if (eDist <= proj.splashRadius) {
+            damageEnemy(enemy, proj.damage);
+          }
+        }
+        spawnParticles(tx, ty, '#ff7043', 15);
+      } else {
+        if (proj.targetEnemy && proj.targetEnemy.alive) {
+          damageEnemy(proj.targetEnemy, proj.damage);
+        }
+        spawnParticles(tx, ty, proj.color, 6);
+      }
+    } else {
+      const moveSpeed = proj.speed * scaledDt;
+      proj.x += (dx / dist) * moveSpeed;
+      proj.y += (dy / dist) * moveSpeed;
+
+      if (proj.type === 'splash') {
+        let closestEnemy = null;
+        let closestEDist = Infinity;
+        for (const enemy of game.enemies) {
+          if (!enemy.alive) continue;
+          const edx = enemy.x - proj.x;
+          const edy = enemy.y - proj.y;
+          const eDist = Math.sqrt(edx * edx + edy * edy);
+          if (eDist < 100 && eDist < closestEDist) {
+            closestEnemy = enemy;
+            closestEDist = eDist;
+          }
+        }
+        if (closestEnemy) {
+          proj.targetX = closestEnemy.x;
+          proj.targetY = closestEnemy.y;
+          proj.targetEnemy = closestEnemy;
+        }
+      }
+    }
+  }
+
+  game.projectiles = game.projectiles.filter(p => p.alive);
+
+  // 파티클 업데이트
+  for (const p of game.particles) {
+    p.x += p.vx * scaledDt;
+    p.y += p.vy * scaledDt;
+    p.life -= scaledDt;
+    p.vx *= 0.96;
+    p.vy *= 0.96;
+  }
+  game.particles = game.particles.filter(p => p.life > 0);
+
+  // 데미지 숫자 업데이트
+  for (const d of game.damageNumbers) {
+    d.y += d.vy * scaledDt;
+    d.life -= scaledDt;
+  }
+  game.damageNumbers = game.damageNumbers.filter(d => d.life > 0);
+}
+
+// ============================================================
+// 적 데미지 처리
+// ============================================================
+function damageEnemy(enemy, damage) {
+  enemy.hp -= damage;
+  enemy.damageFlash = 0.15;
+  spawnDamageNumber(enemy.x, enemy.y, damage);
+
+  if (enemy.hp <= 0) {
+    enemy.alive = false;
+    game.money += enemy.reward;
+    spawnParticles(enemy.x, enemy.y, enemy.color, 20);
+  }
+}
+
+// ============================================================
+// 렌더링
+// ============================================================
+function render() {
+  ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+  drawGrassBackground();
+  drawPath();
+  drawTowerSpots();
+  drawTowers();
+  drawEnemies();
+  drawProjectiles();
+  drawParticles();
+  drawDamageNumbers();
+  drawHUD();
+
+  // 타워 선택 시 사거리 표시
+  if (game.selectedTower) {
+    drawRangeIndicator(game.selectedTower);
+  }
+
+  // 업그레이드 메뉴
+  if (game.showUpgradeMenu && game.selectedTower) {
+    drawUpgradeMenu();
+  }
+
+  // 스테이지 클리어 오버레이
+  if (game.state === 'stageClear') {
+    drawStageClearOverlay();
+  }
+
+  // 웨이브 대기 메시지
+  if (game.betweenWaves) {
+    drawBetweenWaveMessage();
+  }
+}
+
+// ============================================================
+// 잔디 배경
+// ============================================================
+function drawGrassBackground() {
+  const grad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+  // 스테이지별로 배경색 약간 변경
+  if (game.stage === 1) {
+    grad.addColorStop(0, '#2d5a1e');
+    grad.addColorStop(1, '#3a7a28');
+  } else if (game.stage === 2) {
+    grad.addColorStop(0, '#4a6b2d');
+    grad.addColorStop(1, '#5a8a38');
+  } else if (game.stage === 3) {
+    grad.addColorStop(0, '#3d5a2e');
+    grad.addColorStop(1, '#4a7a30');
+  } else if (game.stage === 4) {
+    grad.addColorStop(0, '#2a4a1a');
+    grad.addColorStop(1, '#3a6a28');
+  } else {
+    grad.addColorStop(0, '#5a3a2e');
+    grad.addColorStop(1, '#7a5a40');
+  }
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  ctx.fillStyle = 'rgba(46, 90, 30, 0.3)';
+  for (let i = 0; i < 200; i++) {
+    const x = (i * 137 + 50) % CANVAS_W;
+    const y = (i * 211 + 80) % CANVAS_H;
+    ctx.fillRect(x, y, 3, 3);
+  }
+
+  ctx.fillStyle = 'rgba(60, 120, 40, 0.2)';
+  for (let i = 0; i < 150; i++) {
+    const x = (i * 173 + 120) % CANVAS_W;
+    const y = (i * 251 + 60) % CANVAS_H;
+    ctx.fillRect(x, y, 4, 4);
+  }
+}
+
+// ============================================================
+// 경로 그리기
+// ============================================================
+function drawPath() {
+  // 그림자
+  ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+  ctx.lineWidth = 36;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  if (game.pathPoints.length > 0) {
+    ctx.moveTo(game.pathPoints[0].x + 3, game.pathPoints[0].y + 3);
+    for (let i = 1; i < game.pathPoints.length; i++) {
+      ctx.lineTo(game.pathPoints[i].x + 3, game.pathPoints[i].y + 3);
+    }
+  }
+  ctx.stroke();
+
+  // 메인 경로
+  const pathColor = game.stage >= 5 ? '#6B4E3D' : '#8B7355';
+  ctx.strokeStyle = pathColor;
+  ctx.lineWidth = 32;
+  ctx.beginPath();
+  if (game.pathPoints.length > 0) {
+    ctx.moveTo(game.pathPoints[0].x, game.pathPoints[0].y);
+    for (let i = 1; i < game.pathPoints.length; i++) {
+      ctx.lineTo(game.pathPoints[i].x, game.pathPoints[i].y);
+    }
+  }
+  ctx.stroke();
+
+  // 경로 중앙선
+  ctx.strokeStyle = '#9B8365';
+  ctx.lineWidth = 20;
+  ctx.setLineDash([8, 12]);
+  ctx.beginPath();
+  if (game.pathPoints.length > 0) {
+    ctx.moveTo(game.pathPoints[0].x, game.pathPoints[0].y);
+    for (let i = 1; i < game.pathPoints.length; i++) {
+      ctx.lineTo(game.pathPoints[i].x, game.pathPoints[i].y);
+    }
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // 시작점 표시
+  if (game.pathPoints.length > 0) {
+    const sp = game.pathPoints[0];
+    ctx.fillStyle = '#ff4444';
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, 15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('시작', sp.x, sp.y + 4);
+  }
+
+  // 도착점 표시 (베이스)
+  const ep = game.pathPoints[game.pathPoints.length - 1];
+  ctx.fillStyle = '#3f51b5';
+  ctx.beginPath();
+  ctx.arc(ep.x, ep.y, 20, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 베이스 건물 그리기
+  ctx.fillStyle = '#5c6bc0';
+  ctx.fillRect(ep.x - 18, ep.y - 18, 36, 36);
+  ctx.fillStyle = '#7986cb';
+  ctx.fillRect(ep.x - 14, ep.y - 22, 28, 8);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 10px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('베이스', ep.x, ep.y + 4);
+}
+
+// ============================================================
+// 타워 스팟 그리기
+// ============================================================
+function drawTowerSpots() {
+  for (let i = 0; i < game.towerSpots.length; i++) {
+    const spot = game.towerSpots[i];
+    if (spot.occupied) continue;
+
+    const isHovered = game.hoveredTowerSpot === i;
+    // 패널 표시 중이면 모든 스팟에 하이라이트
+    const showPanel = game.showTowerSelectPanel || game.selectedTowerType;
+    const canAfford = showPanel && game.selectedTowerType && game.money >= TOWER_DEFS[game.selectedTowerType].cost;
+
+    ctx.fillStyle = isHovered ? 'rgba(255, 255, 100, 0.3)' : (showPanel ? 'rgba(255, 255, 255, 0.15)' : 'rgba(255, 255, 255, 0.08)');
+    ctx.strokeStyle = isHovered ? '#ffeb3b' : (showPanel ? 'rgba(255, 255, 255, 0.3)' : 'rgba(255, 255, 255, 0.15)');
+    ctx.lineWidth = isHovered ? 2 : 1;
+
+    const s = TOWER_SPOT_SIZE / 2;
+    ctx.fillRect(spot.x - s, spot.y - s, TOWER_SPOT_SIZE, TOWER_SPOT_SIZE);
+    ctx.strokeRect(spot.x - s, spot.y - s, TOWER_SPOT_SIZE, TOWER_SPOT_SIZE);
+
+    if (showPanel && game.selectedTowerType) {
+      if (canAfford) {
+        ctx.fillStyle = 'rgba(76, 175, 80, 0.4)';
+        ctx.fillRect(spot.x - s + 2, spot.y - s + 2, TOWER_SPOT_SIZE - 4, TOWER_SPOT_SIZE - 4);
+
+        const def = TOWER_DEFS[game.selectedTowerType];
+        drawTowerIcon(spot.x, spot.y, def.color, 0.5);
+      } else {
+        ctx.fillStyle = 'rgba(244, 67, 54, 0.3)';
+        ctx.fillRect(spot.x - s + 2, spot.y - s + 2, TOWER_SPOT_SIZE - 4, TOWER_SPOT_SIZE - 4);
+      }
+    }
+  }
+}
+
+// ============================================================
+// 타워 아이콘 그리기 (미리보기용)
+// ============================================================
+function drawTowerIcon(x, y, color, alpha) {
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, 15, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + 18, y - 5);
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// 타워 그리기
+// ============================================================
+function drawTowers() {
+  for (const tower of game.towers) {
+    const isSelected = game.selectedTower === tower;
+
+    if (isSelected) {
+      ctx.strokeStyle = '#ffeb3b';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(tower.x, tower.y, 25, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    const baseColor = shadeColor(tower.color, -30);
+    ctx.fillStyle = baseColor;
+    ctx.beginPath();
+    ctx.arc(tower.x, tower.y, 18, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = tower.color;
+    ctx.beginPath();
+    ctx.arc(tower.x, tower.y, 14, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 레벨 표시 (별)
+    if (tower.level > 1) {
+      ctx.fillStyle = '#ffd700';
+      ctx.font = 'bold 10px Arial';
+      ctx.textAlign = 'center';
+      const stars = '★'.repeat(tower.level - 1);
+      ctx.fillText(stars, tower.x, tower.y + 30);
+    }
+
+    // 포신 (타겟 방향)
+    ctx.strokeStyle = '#444';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(tower.x, tower.y);
+    const gunLen = 20 + tower.level * 3;
+    ctx.lineTo(
+      tower.x + Math.cos(tower.angle) * gunLen,
+      tower.y + Math.sin(tower.angle) * gunLen
+    );
+    ctx.stroke();
+
+    // 포신 끝부분
+    ctx.fillStyle = '#666';
+    ctx.beginPath();
+    ctx.arc(
+      tower.x + Math.cos(tower.angle) * gunLen,
+      tower.y + Math.sin(tower.angle) * gunLen,
+      4, 0, Math.PI * 2
+    );
+    ctx.fill();
+
+    // 타워 타입별 장식
+    if (tower.type === 'sniper') {
+      ctx.fillStyle = '#fff';
+      ctx.font = '8px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('N', tower.x, tower.y + 3);
+    } else if (tower.type === 'splash') {
+      ctx.strokeStyle = '#ff5722';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(tower.x, tower.y, 16, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+}
+
+// ============================================================
+// 적 그리기
+// ============================================================
+function drawEnemies() {
+  for (const enemy of game.enemies) {
+    if (!enemy.alive) continue;
+
+    const flash = enemy.damageFlash > 0;
+
+    // 그림자
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(enemy.x + 2, enemy.y + enemy.radius * 0.7, enemy.radius * 0.8, enemy.radius * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 적 몸체
+    ctx.fillStyle = flash ? '#ffffff' : enemy.color;
+    ctx.beginPath();
+    ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 테두리
+    ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // 체력 바
+    const hpBarWidth = enemy.radius * 2.5;
+    const hpBarHeight = 4;
+    const hpRatio = enemy.hp / enemy.maxHp;
+
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(enemy.x - hpBarWidth / 2, enemy.y - enemy.radius - 10, hpBarWidth, hpBarHeight);
+
+    ctx.fillStyle = hpRatio > 0.5 ? '#4caf50' : (hpRatio > 0.25 ? '#ff9800' : '#f44336');
+    ctx.fillRect(enemy.x - hpBarWidth / 2, enemy.y - enemy.radius - 10, hpBarWidth * hpRatio, hpBarHeight);
+
+    // 보스일 경우 추가 장식
+    if (enemy.type === 'boss') {
+      ctx.strokeStyle = '#ffd700';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(enemy.x, enemy.y, enemy.radius + 3, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 14px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('👑', enemy.x, enemy.y + 5);
+    }
+
+    // 얼굴 표시
+    if (enemy.type !== 'boss') {
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.max(8, enemy.radius)}px Arial`;
+      ctx.textAlign = 'center';
+      const faces = { normal: '😠', fast: '⚡', tank: '🛡️' };
+      if (faces[enemy.type]) {
+        ctx.fillText(faces[enemy.type], enemy.x, enemy.y + 4);
+      }
+    }
+  }
+}
+
+// ============================================================
+// 발사체 그리기
+// ============================================================
+function drawProjectiles() {
+  for (const proj of game.projectiles) {
+    if (!proj.alive) continue;
+
+    ctx.fillStyle = proj.color;
+    ctx.shadowColor = proj.color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, proj.type === 'splash' ? 5 : 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.beginPath();
+    ctx.arc(proj.x, proj.y, proj.type === 'splash' ? 8 : 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+  }
+}
+
+// ============================================================
+// 파티클 그리기
+// ============================================================
+function drawParticles() {
+  for (const p of game.particles) {
+    const alpha = p.life / p.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * alpha, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// 데미지 숫자 그리기
+// ============================================================
+function drawDamageNumbers() {
+  for (const d of game.damageNumbers) {
+    const alpha = d.life / d.maxLife;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#ffeb3b';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 2;
+    ctx.font = 'bold 14px Arial';
+    ctx.textAlign = 'center';
+    ctx.strokeText(d.text, d.x, d.y);
+    ctx.fillText(d.text, d.x, d.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ============================================================
+// 사거리 표시기
+// ============================================================
+function drawRangeIndicator(tower) {
+  ctx.fillStyle = 'rgba(255, 255, 0, 0.08)';
+  ctx.strokeStyle = 'rgba(255, 255, 0, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([5, 5]);
+  ctx.beginPath();
+  ctx.arc(tower.x, tower.y, tower.range, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '10px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(`사거리: ${Math.round(tower.range)}`, tower.x, tower.y - tower.range - 8);
+}
+
+// ============================================================
+// HUD 그리기 (스테이지 정보 추가)
+// ============================================================
+function drawHUD() {
+  // 상단 바 배경
+  const hudGrad = ctx.createLinearGradient(0, 0, 0, 42);
+  hudGrad.addColorStop(0, 'rgba(15,15,30,0.95)');
+  hudGrad.addColorStop(1, 'rgba(15,15,30,0.85)');
+  ctx.fillStyle = hudGrad;
+  ctx.fillRect(0, 0, CANVAS_W, 42);
+
+  // 구분선
+  ctx.strokeStyle = 'rgba(100,100,150,0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, 42);
+  ctx.lineTo(CANVAS_W, 42);
+  ctx.stroke();
+
+  // 스테이지 + 웨이브 정보 (왼쪽)
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 15px Arial';
+  ctx.textAlign = 'left';
+  ctx.fillText(`🏰 스테이지 ${game.stage}`, 12, 18);
+  ctx.fillStyle = '#fff';
+  ctx.font = '13px Arial';
+  ctx.fillText(`웨이브 ${game.wave} / ${game.maxWaves}`, 12, 35);
+
+  // 생명 (하트 + 숫자) - 중앙 왼쪽
+  const heartX = 200;
+  ctx.fillStyle = '#f44336';
+  ctx.font = 'bold 15px Arial';
+  ctx.textAlign = 'left';
+  ctx.fillText(`❤️ ${game.lives}`, heartX, 27);
+
+  // 자금 (중앙 오른쪽)
+  const moneyX = CANVAS_W / 2 + 30;
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 15px Arial';
+  ctx.textAlign = 'left';
+  ctx.fillText(`💰 $${game.money}`, moneyX, 27);
+
+  // 속도 조절 버튼 (오른쪽)
+  drawSpeedButton(840, 6, game.speed === 1 ? '1x' : '1x', game.speed === 1);
+  drawSpeedButton(900, 6, '2x', game.speed === 2);
+
+  // 좌측 타워 선택 패널 (선택 시 표시)
+  if (game.showTowerSelectPanel || game.selectedTowerType) {
+    drawTowerSelectionPanel();
+  }
+
+  // 클리어 버튼 (웨이브 대기 중 + 우측 하단)
+  if (game.betweenWaves && game.state === 'playing') {
+    const btnX = CANVAS_W - 200;
+    const btnY = CANVAS_H - 55;
+    ctx.fillStyle = '#4caf50';
+    ctx.fillRect(btnX, btnY, 185, 38);
+    ctx.strokeStyle = '#66bb6a';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(btnX, btnY, 185, 38);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`▶ 웨이브 ${game.wave + 1} 시작`, btnX + 92, btnY + 24);
+  }
+
+  // 선택 해제 버튼 (우측 하단)
+  if ((game.showTowerSelectPanel || game.selectedTowerType) && !game.betweenWaves) {
+    const btnX = CANVAS_W - 200;
+    const btnY = CANVAS_H - 55;
+    ctx.fillStyle = '#f44336';
+    ctx.fillRect(btnX, btnY, 185, 38);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('✖ 선택 해제', btnX + 92, btnY + 24);
+  }
+}
+
+// ============================================================
+// 속도 버튼 그리기
+// ============================================================
+function drawSpeedButton(x, y, label, active) {
+  ctx.fillStyle = active ? '#4caf50' : 'rgba(255,255,255,0.12)';
+  ctx.fillRect(x, y, 56, 30);
+  ctx.strokeStyle = active ? '#fff' : 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x, y, 56, 30);
+  ctx.fillStyle = active ? '#fff' : '#aaa';
+  ctx.font = 'bold 14px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x + 28, y + 20);
+}
+
+// ============================================================
+// 타워 선택 패널 (타워 스팟 클릭 시 표시)
+// ============================================================
+function drawTowerSelectionPanel() {
+  const panelX = CANVAS_W - 210;
+  const panelY = 50;
+  const panelW = 200;
+
+  // 그림자
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(panelX + 4, panelY + 4, panelW, 310);
+
+  // 패널 배경
+  ctx.fillStyle = 'rgba(20,20,40,0.95)';
+  ctx.fillRect(panelX, panelY, panelW, 310);
+  ctx.strokeStyle = 'rgba(100,100,200,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(panelX, panelY, panelW, 310);
+
+  // 패널 제목
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 15px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('🏗️ 타워 설치', panelX + panelW / 2, panelY + 22);
+
+  // 설명 텍스트
+  ctx.fillStyle = '#aaa';
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText('아래에서 타워를 선택하세요', panelX + panelW / 2, panelY + 40);
+
+  // 타워 목록
+  const towerTypes = ['basic', 'sniper', 'splash'];
+  let yPos = panelY + 58;
+
+  for (const type of towerTypes) {
+    const def = TOWER_DEFS[type];
+    const canAfford = game.money >= def.cost;
+    const isSelected = game.selectedTowerType === type;
+
+    // 타워 버튼 배경
+    ctx.fillStyle = isSelected ? 'rgba(76, 175, 80, 0.3)' : (canAfford ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.01)');
+    ctx.fillRect(panelX + 6, yPos, panelW - 12, 78);
+
+    if (isSelected) {
+      ctx.strokeStyle = '#4caf50';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(panelX + 6, yPos, panelW - 12, 78);
+    } else {
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(panelX + 6, yPos, panelW - 12, 78);
+    }
+
+    // 타워 아이콘
+    drawTowerIcon(panelX + 34, yPos + 25, def.color, 1);
+
+    // 이름과 가격
+    ctx.fillStyle = canAfford ? '#fff' : '#666';
+    ctx.font = 'bold 13px Arial';
+    ctx.textAlign = 'left';
+    ctx.fillText(def.name, panelX + 54, yPos + 22);
+
+    ctx.fillStyle = canAfford ? '#ffd700' : '#888';
+    ctx.font = '12px Arial';
+    ctx.fillText(`$${def.cost}`, panelX + 54, yPos + 38);
+
+    // 설명
+    ctx.fillStyle = '#999';
+    ctx.font = '10px Arial';
+    ctx.fillText(def.desc, panelX + 12, yPos + 56);
+
+    // 스탯 요약
+    ctx.fillStyle = '#777';
+    ctx.font = '10px Arial';
+    ctx.fillText(`공:${def.damage[0]} 사:${Math.round(def.range[0])}`, panelX + 12, yPos + 72);
+
+    yPos += 83;
+  }
+}
+
+// ============================================================
+// 업그레이드 메뉴
+// ============================================================
+function drawUpgradeMenu() {
+  const tower = game.selectedTower;
+  if (!tower) return;
+
+  const menuX = Math.min(tower.x - 80, CANVAS_W - 180);
+  const menuY = tower.y + 45;
+  const menuW = 160;
+  const menuH = tower.level < 3 ? 120 : 70;
+
+  // 배경
+  ctx.fillStyle = 'rgba(10,10,30,0.95)';
+  ctx.fillRect(menuX, menuY, menuW, menuH);
+  ctx.strokeStyle = '#ffd700';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(menuX, menuY, menuW, menuH);
+
+  // 타워 정보
+  const def = TOWER_DEFS[tower.type];
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 13px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(`${def.name} Lv.${tower.level}`, menuX + menuW / 2, menuY + 18);
+
+  // 스탯 정보
+  ctx.fillStyle = '#aaa';
+  ctx.font = '11px Arial';
+  ctx.textAlign = 'left';
+  ctx.fillText(`공격력: ${Math.round(tower.damage)}`, menuX + 10, menuY + 38);
+  ctx.fillText(`사거리: ${Math.round(tower.range)}`, menuX + 10, menuY + 54);
+
+  if (tower.level < 3) {
+    const upgradeCost = Math.round(def.cost * (0.5 + (tower.level + 1) * 0.2));
+    const canUpgrade = game.money >= upgradeCost;
+
+    ctx.fillStyle = canUpgrade ? '#ffd700' : '#f44336';
+    ctx.font = 'bold 12px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`업그레이드: $${upgradeCost}`, menuX + menuW / 2, menuY + 78);
+
+    tower._upgradeBtn = { x: menuX + 10, y: menuY + 65, w: menuW - 20, h: 25 };
+
+    // 판매 버튼
+    const sellValue = Math.round(def.cost * 0.5);
+    ctx.fillStyle = '#ff9800';
+    ctx.font = '11px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`판매: $${sellValue}`, menuX + menuW / 2, menuY + 103);
+
+    tower._sellBtn = { x: menuX + 10, y: menuY + 90, w: menuW - 20, h: 25 };
+  } else {
+    ctx.fillStyle = '#4caf50';
+    ctx.font = 'bold 13px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText('최대 레벨!', menuX + menuW / 2, menuY + 38);
+
+    const sellValue = Math.round(def.cost * 0.5);
+    ctx.fillStyle = '#ff9800';
+    ctx.font = '11px Arial';
+    ctx.textAlign = 'center';
+    ctx.fillText(`판매: $${sellValue}`, menuX + menuW / 2, menuY + 60);
+
+    tower._sellBtn = { x: menuX + 10, y: menuY + 45, w: menuW - 20, h: 25 };
+  }
+}
+
+// ============================================================
+// 스테이지 클리어 오버레이
+// ============================================================
+function drawStageClearOverlay() {
+  // 배경
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
+  ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // 패널
+  const panelX = CANVAS_W / 2 - 180;
+  const panelY = CANVAS_H / 2 - 120;
+  const panelW = 360;
+  const panelH = 240;
+
+  ctx.fillStyle = 'rgba(20,20,50,0.95)';
+  ctx.fillRect(panelX, panelY, panelW, panelH);
+  ctx.strokeStyle = '#ffd700';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(panelX, panelY, panelW, panelH);
+
+  // 타이틀
+  ctx.fillStyle = '#ffd700';
+  ctx.font = 'bold 28px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(`🏆 스테이지 ${game.stage} 클리어!`, CANVAS_W / 2, panelY + 45);
+
+  // 통계
+  ctx.fillStyle = '#fff';
+  ctx.font = '16px Arial';
+  ctx.fillText(`남은 생명: ${game.lives}`, CANVAS_W / 2, panelY + 85);
+  ctx.fillStyle = '#ffd700';
+  ctx.fillText(`보유 자금: $${game.money}`, CANVAS_W / 2, panelY + 115);
+
+  // 다음 스테이지 버튼
+  const btnX = CANVAS_W / 2 - 100;
+  const btnY = panelY + 145;
+  ctx.fillStyle = '#4caf50';
+  ctx.fillRect(btnX, btnY, 200, 45);
+  ctx.strokeStyle = '#66bb6a';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(btnX, btnY, 200, 45);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px Arial';
+  ctx.fillText(`▶ 스테이지 ${game.stage + 1} 시작`, CANVAS_W / 2, btnY + 30);
+
+  // 버튼 영역 저장 (클릭 감지용)
+  game._stageNextBtn = { x: btnX, y: btnY, w: 200, h: 45 };
+}
+
+// ============================================================
+// 웨이브 대기 메시지
+// ============================================================
+function drawBetweenWaveMessage() {
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  ctx.fillRect(CANVAS_W / 2 - 170, CANVAS_H / 2 - 55, 340, 80);
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(CANVAS_W / 2 - 170, CANVAS_H / 2 - 55, 340, 80);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 16px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(`✅ 웨이브 ${game.wave} 클리어!`, CANVAS_W / 2, CANVAS_H / 2 - 25);
+
+  ctx.fillStyle = '#aaa';
+  ctx.font = '13px Arial';
+  ctx.fillText('아래 버튼을 눌러 다음 웨이브를 시작하세요', CANVAS_W / 2, CANVAS_H / 2 + 5);
+}
+
+// ============================================================
+// 오버레이 표시 (게임오버/승리)
+// ============================================================
+function showGameOver() {
+  overlayTitle.textContent = '💀 게임 오버';
+  overlayStats.innerHTML = `
+    <p>스테이지: ${game.stage}</p>
+    <p>최종 웨이브: ${game.wave} / ${game.maxWaves}</p>
+    <p>남은 생명: ${Math.max(0, game.lives)}</p>
+  `;
+  overlay.classList.add('active');
+}
+
+function showVictory() {
+  overlayTitle.textContent = '🎉 완전 승리!';
+  overlayStats.innerHTML = `
+    <p>모든 스테이지 클리어!</p>
+    <p>남은 생명: ${game.lives}</p>
+    <p>남은 자금: $${game.money}</p>
+  `;
+  overlay.classList.add('active');
+}
+
+// ★ 스테이지 클리어 오버레이 표시 함수 (캔버스 위에서)
+function showStageClear() {
+  game.state = 'stageClear';
+  // 타워와 자금은 유지, 웨이브 리셋
+  game.wave = 0;
+  game.lives = Math.max(game.lives, 15); // 생명 일부 회복 (최소 15)
+  game.money += 200 + game.stage * 100; // 보너스 자금
+}
+
+// ============================================================
+// 유틸리티 함수들
+// ============================================================
+function shadeColor(color, percent) {
+  const num = parseInt(color.replace('#', ''), 16);
+  const amt = Math.round(2.55 * percent);
+  const R = Math.max(0, Math.min(255, (num >> 16) + amt));
+  const G = Math.max(0, Math.min(255, ((num >> 8) & 0x00FF) + amt));
+  const B = Math.max(0, Math.min(255, (num & 0x0000FF) + amt));
+  return `rgb(${R},${G},${B})`;
+}
+
+// ============================================================
+// 타워 설치 함수
+// ============================================================
+function placeTower(spotIndex) {
+  const spot = game.towerSpots[spotIndex];
+  if (spot.occupied) return;
+
+  const type = game.selectedTowerType;
+  const def = TOWER_DEFS[type];
+  if (!type || game.money < def.cost) return;
+
+  game.money -= def.cost;
+  const tower = createTower(type, spotIndex);
+  game.towers.push(tower);
+  spot.occupied = true;
+  spot.tower = tower;
+
+  spawnParticles(spot.x, spot.y, '#ffd700', 12);
+
+  // 타워 선택 유지 (업그레이드 가능하게)
+  game.selectedTower = tower;
+  game.showUpgradeMenu = true;
+}
+
+// ============================================================
+// 입력 처리 (마우스 & 터치) - 수정됨: 패널 버튼 클릭 포함
+// ============================================================
+function getCanvasCoords(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = CANVAS_W / rect.width;
+  const scaleY = CANVAS_H / rect.height;
+
+  let clientX, clientY;
+  if (e.touches) {
+    clientX = e.touches[0].clientX;
+    clientY = e.touches[0].clientY;
+  } else {
+    clientX = e.clientX;
+    clientY = e.clientY;
+  }
+
+  return {
+    x: (clientX - rect.left) * scaleX,
+    y: (clientY - rect.top) * scaleY
+  };
+}
+
+function handleClick(e) {
+  if (game.state !== 'playing' && game.state !== 'stageClear') return;
+
+  const pos = getCanvasCoords(e);
+
+  // ★ 스테이지 클리어 오버레이의 "다음 스테이지" 버튼 클릭 체크
+  if (game.state === 'stageClear' && game._stageNextBtn) {
+    const btn = game._stageNextBtn;
+    if (pos.x >= btn.x && pos.x <= btn.x + btn.w && pos.y >= btn.y && pos.y <= btn.y + btn.h) {
+      loadStage(game.stage + 1);
+      game.state = 'playing';
+      game.betweenWaves = true;
+      game.waveDelay = 2;
+      return;
+    }
+  }
+
+  // ★ 타워 선택 패널 클릭 체크 (가장 먼저!)
+  if (game.showTowerSelectPanel || game.selectedTowerType) {
+    const panelX = CANVAS_W - 210;
+    const panelY = 50;
+    const panelW = 200;
+
+    // 패널 영역 내부 클릭인지 확인
+    if (pos.x >= panelX && pos.x <= panelX + panelW && pos.y >= panelY && pos.y <= panelY + 310) {
+      const towerTypes = ['basic', 'sniper', 'splash'];
+
+      // 패널 제목/설명 영역 제외 (58px 아래부터 타워 버튼 시작)
+      let yPos = panelY + 58;
+      for (const type of towerTypes) {
+        const def = TOWER_DEFS[type];
+        const canAfford = game.money >= def.cost;
+
+        // 버튼 영역 체크
+        if (pos.x >= panelX + 6 && pos.x <= panelX + panelW - 6 && 
+            pos.y >= yPos && pos.y <= yPos + 78) {
+          if (canAfford) {
+            game.selectedTowerType = type;
+
+            // ★ 클릭한 스팟이 있으면 바로 설치!
+            if (game.clickedSpotIndex !== null) {
+              placeTower(game.clickedSpotIndex);
+            }
+          }
+          return; // 패널 버튼 클릭 시 즉시 리턴!
+        }
+        yPos += 83;
+      }
+
+      // 패널 영역 클릭 but 버튼 아님 → 아무 동작 안 함 (선택 유지)
+      return;
+    }
+  }
+
+  // 속도 버튼 클릭 체크
+  if (pos.y >= 6 && pos.y <= 36) {
+    if (pos.x >= 840 && pos.x <= 896) {
+      game.speed = 1;
+      return;
+    }
+    if (pos.x >= 900 && pos.x <= 956) {
+      game.speed = 2;
+      return;
+    }
+  }
+
+  // 클리어 버튼 클릭 체크
+  if (game.betweenWaves && game.state === 'playing') {
+    const btnX = CANVAS_W - 200;
+    const btnY = CANVAS_H - 55;
+    if (pos.x >= btnX && pos.x <= btnX + 185 && pos.y >= btnY && pos.y <= btnY + 38) {
+      startWave();
+      return;
+    }
+  }
+
+  // 선택 해제 버튼 클릭 체크
+  if ((game.showTowerSelectPanel || game.selectedTowerType) && !game.betweenWaves) {
+    const btnX = CANVAS_W - 200;
+    const btnY = CANVAS_H - 55;
+    if (pos.x >= btnX && pos.x <= btnX + 185 && pos.y >= btnY && pos.y <= btnY + 38) {
+      game.selectedTowerType = null;
+      game.showTowerSelectPanel = false;
+      game.clickedSpotIndex = null;
+      return;
+    }
+  }
+
+  // 업그레이드 메뉴 클릭 체크
+  if (game.showUpgradeMenu && game.selectedTower) {
+    const tower = game.selectedTower;
+    if (tower._upgradeBtn) {
+      const btn = tower._upgradeBtn;
+      if (pos.x >= btn.x && pos.x <= btn.x + btn.w && pos.y >= btn.y && pos.y <= btn.y + btn.h) {
+        upgradeTower(tower);
+        return;
+      }
+    }
+    if (tower._sellBtn) {
+      const btn = tower._sellBtn;
+      if (pos.x >= btn.x && pos.x <= btn.x + btn.w && pos.y >= btn.y && pos.y <= btn.y + btn.h) {
+        const def = TOWER_DEFS[tower.type];
+        game.money += Math.round(def.cost * 0.5);
+        game.towerSpots[tower.spotIndex].occupied = false;
+        game.towerSpots[tower.spotIndex].tower = null;
+        game.towers = game.towers.filter(t => t !== tower);
+        game.selectedTower = null;
+        game.showUpgradeMenu = false;
+        spawnParticles(tower.x, tower.y, '#ffd700', 15);
+        return;
+      }
+    }
+
+    const menuX = Math.min(tower.x - 80, CANVAS_W - 180);
+    const menuY = tower.y + 45;
+    if (!(pos.x >= menuX && pos.x <= menuX + 160 && pos.y >= menuY && pos.y <= menuY + (tower.level < 3 ? 120 : 70))) {
+      game.showUpgradeMenu = false;
+      return;
+    }
+  }
+
+  // 타워 클릭 체크
+  let clickedTower = null;
+  for (const tower of game.towers) {
+    const dx = pos.x - tower.x;
+    const dy = pos.y - tower.y;
+    if (Math.sqrt(dx * dx + dy * dy) < 20) {
+      clickedTower = tower;
+      break;
+    }
+  }
+
+  if (clickedTower) {
+    game.selectedTower = clickedTower;
+    game.showUpgradeMenu = true;
+    game.showTowerSelectPanel = false;
+    return;
+  }
+
+  // 타워 스팟 클릭 체크
+  let clickedSpot = null;
+  for (let i = 0; i < game.towerSpots.length; i++) {
+    const spot = game.towerSpots[i];
+    if (spot.occupied) continue;
+    const dx = pos.x - spot.x;
+    const dy = pos.y - spot.y;
+    if (Math.sqrt(dx * dx + dy * dy) < TOWER_SPOT_SIZE / 2) {
+      clickedSpot = i;
+      break;
+    }
+  }
+
+  // 타워 스팟 클릭 시 패널 표시 + 클릭된 스팟 인덱스 저장
+  if (clickedSpot !== null) {
+    game.showTowerSelectPanel = true;
+    game.clickedSpotIndex = clickedSpot;
+    return;
+  }
+
+  // 아무 곳도 클릭 시 모든 UI 닫기
+  game.selectedTower = null;
+  game.showUpgradeMenu = false;
+  game.showTowerSelectPanel = false;
+  game.clickedSpotIndex = null;
+}
+
+// ============================================================
+// 마우스 이동 이벤트 (호버 체크)
+// ============================================================
+function handleMouseMove(e) {
+  const pos = getCanvasCoords(e);
+  game.mouseX = pos.x;
+  game.mouseY = pos.y;
+
+  // 타워 스팟 호버 체크
+  game.hoveredTowerSpot = null;
+  for (let i = 0; i < game.towerSpots.length; i++) {
+    const spot = game.towerSpots[i];
+    if (spot.occupied) continue;
+    const dx = pos.x - spot.x;
+    const dy = pos.y - spot.y;
+    if (Math.sqrt(dx * dx + dy * dy) < TOWER_SPOT_SIZE / 2) {
+      game.hoveredTowerSpot = i;
+      break;
+    }
+  }
+}
+
+// ============================================================
+// 이벤트 리스너 등록
+// ============================================================
+canvas.addEventListener('mousedown', handleClick);
+canvas.addEventListener('mousemove', handleMouseMove);
+canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleClick(e); }, { passive: false });
+canvas.addEventListener('touchmove', (e) => { e.preventDefault(); handleMouseMove(e); }, { passive: false });
+
+restartBtn.addEventListener('click', () => {
+  overlay.classList.remove('active');
+  initGame();
+});
+
+// ============================================================
+// 게임 루프
+// ============================================================
+let lastTime = 0;
+
+function gameLoop(timestamp) {
+  const dt = Math.min((timestamp - lastTime) / 1000, 0.05);
+  lastTime = timestamp;
+
+  update(dt);
+  render();
+
+  requestAnimationFrame(gameLoop);
+}
+
+// ============================================================
+// 게임 초기화 및 시작
+// ============================================================
+initGame();
+lastTime = performance.now();
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>
